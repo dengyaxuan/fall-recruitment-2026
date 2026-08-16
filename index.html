@@ -288,11 +288,16 @@ let statuses = {};
 let favCompanies = [];
 const scrollPositions = { jobs: 0, fav: 0, summary: 0, resume: 0 };
 
-// ── 云同步（jsonblob.com，免费无需注册）──
-const CLOUD_API = "https://jsonblob.com/api/jsonBlob";
-let syncBlobId = null;
+// ── 云同步（Firebase Realtime Database，国内可直连，原生支持CORS）──
+const FB_DB = "https://webuse-e270d-default-rtdb.asia-southeast1.firebasedatabase.app";
+const FB_KEY = "9b18035e2e9584d0fb42fd04";  // 密钥路径，等价于访问密码
+const FB_URL = `${FB_DB}/d/${FB_KEY}/state.json`;
 let syncTimer = null;
 let syncStatus = "local";
+
+function getLocalEditTime() {
+  return parseInt(localStorage.getItem("last_edit_t") || "0", 10);
+}
 
 function getSyncIdFromURL() {
   const params = new URLSearchParams(location.search);
@@ -300,7 +305,6 @@ function getSyncIdFromURL() {
 }
 
 function clearSyncFromURL() {
-  syncBlobId = null;
   localStorage.removeItem("sync_blob_id");
   const url = new URL(location.href);
   url.searchParams.delete("sync");
@@ -315,80 +319,71 @@ function updateSyncUI() {
   else if (syncStatus === "synced") { el.textContent = "☁️ 已云同步"; el.className = "text-green-600"; }
   else if (syncStatus === "error") { el.textContent = "⚠️ 云同步失败（仅本地）"; el.className = "text-red-500"; }
   else { el.textContent = "📁 本地模式"; el.className = "text-gray-500"; }
-  if (syncBlobId && info && syncStatus !== "error") {
-    info.innerHTML = `<span class="text-gray-400">ID: ${syncBlobId.slice(0,8)}…</span> <button onclick="copySyncURL()" class="text-indigo-500 hover:underline">📋 复制同步链接</button>`;
-  } else if (info) {
-    info.innerHTML = `<span class="text-gray-400 text-xs">数据未同步到云端，请使用下方导出/导入功能</span>`;
+  if (info) {
+    if (syncStatus === "error") {
+      info.innerHTML = `<span class="text-gray-400 text-xs">数据未同步到云端，请使用下方导出/导入功能</span>`;
+    } else if (syncStatus === "synced") {
+      info.innerHTML = `<span class="text-gray-400 text-xs">Firebase 云同步正常</span>`;
+    } else {
+      info.innerHTML = "";
+    }
   }
 }
 
-function copySyncURL() {
-  const url = location.origin + location.pathname + "?sync=" + syncBlobId;
-  navigator.clipboard.writeText(url).then(() => {
-    const btn = event.target;
-    const orig = btn.textContent;
-    btn.textContent = "✓ 已复制";
-    setTimeout(() => btn.textContent = orig, 2000);
-  }).catch(() => {
-    prompt("请手动复制此链接：", url);
-  });
-}
-
 async function cloudSave(retry = true) {
-  const data = JSON.stringify({ s: statuses, f: favCompanies, t: Date.now() });
+  const payload = JSON.stringify({ s: statuses, f: favCompanies, t: Date.now() });
   try {
     syncStatus = "syncing"; updateSyncUI();
-    if (!syncBlobId) {
-      const res = await fetch(CLOUD_API, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        body: data
-      });
-      if (!res.ok) throw new Error("create failed");
-      const loc = res.headers.get("Location") || await res.text();
-      syncBlobId = loc.split("/").pop().replace(/["']/g, "");
-      localStorage.setItem("sync_blob_id", syncBlobId);
-    } else {
-      const res = await fetch(`${CLOUD_API}/${syncBlobId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        body: data
-      });
-      if (!res.ok) throw new Error("update failed");
-    }
+    const res = await fetch(FB_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: payload
+    });
+    if (!res.ok) throw new Error("save failed: " + res.status);
+    const sent = JSON.parse(payload);
+    localStorage.setItem("last_edit_t", String(sent.t));
     syncStatus = "synced"; updateSyncUI();
   } catch (e) {
     if (retry) {
-      // 1秒后重试一次
-      setTimeout(() => cloudSave(false), 1000);
+      setTimeout(() => cloudSave(false), 1500);
       return;
     }
     syncStatus = "error"; updateSyncUI();
-    clearSyncFromURL(); // 云端不可靠，清除旧syncId防止误导
   }
 }
 
 async function cloudLoad() {
-  syncBlobId = getSyncIdFromURL() || localStorage.getItem("sync_blob_id");
-  if (!syncBlobId) return;
   try {
     syncStatus = "syncing"; updateSyncUI();
-    const res = await fetch(`${CLOUD_API}/${syncBlobId}`, { headers: { "Accept": "application/json" } });
-    if (!res.ok) throw new Error("load failed");
+    const res = await fetch(FB_URL + `?t=${Date.now()}`);
+    if (!res.ok) throw new Error("load failed: " + res.status);
     const data = await res.json();
-    if (data.s) statuses = data.s;
-    if (data.f) favCompanies = data.f;
-    localStorage.setItem("sync_blob_id", syncBlobId);
-    localStorage.setItem("job_statuses", JSON.stringify(statuses));
-    localStorage.setItem("fav_companies", JSON.stringify(favCompanies));
+    if (data && data.s) {
+      const localT = getLocalEditTime();
+      if ((data.t || 0) > localT) {
+        // 云端更新，覆盖本地
+        statuses = data.s;
+        if (data.f) favCompanies = data.f;
+        localStorage.setItem("job_statuses", JSON.stringify(statuses));
+        localStorage.setItem("fav_companies", JSON.stringify(favCompanies));
+        localStorage.setItem("last_edit_t", String(data.t || Date.now()));
+        refreshAll();
+      } else {
+        // 本地更新，把本地推上云
+        debouncedCloudSave();
+      }
+    } else {
+      // 云端为空，上传本地
+      cloudSave();
+    }
     syncStatus = "synced"; updateSyncUI();
   } catch (e) {
     syncStatus = "error"; updateSyncUI();
-    clearSyncFromURL(); // 加载失败，旧syncId无效，清除
   }
 }
 
 function debouncedCloudSave() {
+  localStorage.setItem("last_edit_t", String(Date.now()));
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(cloudSave, 2000);
 }
@@ -1102,6 +1097,8 @@ function switchSection(sec) {
 async function init() {
   loadStatuses();
   await cloudLoad();
+  // 每60秒拉一次云端，多设备同时在线也能同步
+  setInterval(() => { if (syncStatus !== "syncing" && syncStatus !== "error") cloudLoad(); }, 60000);
   initFilters();
   refreshFavFilter();
   updateCounts();
