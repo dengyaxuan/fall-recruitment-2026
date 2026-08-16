@@ -311,19 +311,29 @@ function clearSyncFromURL() {
   history.replaceState(null, "", url.toString());
 }
 
+let lastSyncTime = null;
+
+function fmtSyncTime(d) {
+  const p = n => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 function updateSyncUI() {
   const el = document.getElementById("sync-status");
   const info = document.getElementById("sync-info");
   if (!el) return;
   if (syncStatus === "syncing") { el.textContent = "🔄 同步中…"; el.className = "text-amber-600"; }
-  else if (syncStatus === "synced") { el.textContent = "☁️ 已云同步"; el.className = "text-green-600"; }
+  else if (syncStatus === "synced") {
+    el.textContent = lastSyncTime ? `☁️ 已同步 ${fmtSyncTime(lastSyncTime)}` : "☁️ 已云同步";
+    el.className = "text-green-600";
+  }
   else if (syncStatus === "error") { el.textContent = "⚠️ 云同步失败（仅本地）"; el.className = "text-red-500"; }
   else { el.textContent = "📁 本地模式"; el.className = "text-gray-500"; }
   if (info) {
     if (syncStatus === "error") {
       info.innerHTML = `<span class="text-gray-400 text-xs">数据未同步到云端，请使用下方导出/导入功能</span>`;
     } else if (syncStatus === "synced") {
-      info.innerHTML = `<span class="text-gray-400 text-xs">Firebase 云同步正常</span>`;
+      info.innerHTML = `<span class="text-gray-400 text-xs">Firebase 云同步 · 上次同步 ${lastSyncTime ? fmtSyncTime(lastSyncTime) : "—"}</span>`;
     } else {
       info.innerHTML = "";
     }
@@ -342,6 +352,7 @@ async function cloudSave(retry = true) {
     if (!res.ok) throw new Error("save failed: " + res.status);
     const sent = JSON.parse(payload);
     localStorage.setItem("last_edit_t", String(sent.t));
+    lastSyncTime = new Date();
     syncStatus = "synced"; updateSyncUI();
   } catch (e) {
     if (retry) {
@@ -376,6 +387,7 @@ async function cloudLoad() {
       // 云端为空，上传本地
       cloudSave();
     }
+    lastSyncTime = new Date();
     syncStatus = "synced"; updateSyncUI();
   } catch (e) {
     syncStatus = "error"; updateSyncUI();
