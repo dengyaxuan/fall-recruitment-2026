@@ -65,7 +65,8 @@ body { font-family: 'Microsoft YaHei','PingFang SC',system-ui,sans-serif; backgr
     <span id="sync-status" class="text-gray-500">📁 本地模式</span>
     <span class="text-gray-300">|</span>
     <button onclick="exportData()" class="text-indigo-600 hover:underline text-xs">导出数据</button>
-    <button onclick="document.getElementById('import-file').click()" class="text-indigo-600 hover:underline text-xs">导入数据</button>
+    <button onclick="importFromClipboard()" class="text-indigo-600 hover:underline text-xs">从剪贴板粘贴</button>
+    <button onclick="document.getElementById('import-file').click()" class="text-indigo-600 hover:underline text-xs">导入文件</button>
     <input type="file" id="import-file" class="hidden" accept=".json">
     <span class="ml-auto text-xs text-gray-400 flex items-center gap-2" id="sync-info"></span>
   </div>
@@ -298,16 +299,26 @@ function getSyncIdFromURL() {
   return params.get("sync");
 }
 
+function clearSyncFromURL() {
+  syncBlobId = null;
+  localStorage.removeItem("sync_blob_id");
+  const url = new URL(location.href);
+  url.searchParams.delete("sync");
+  history.replaceState(null, "", url.toString());
+}
+
 function updateSyncUI() {
   const el = document.getElementById("sync-status");
   const info = document.getElementById("sync-info");
   if (!el) return;
   if (syncStatus === "syncing") { el.textContent = "🔄 同步中…"; el.className = "text-amber-600"; }
   else if (syncStatus === "synced") { el.textContent = "☁️ 已云同步"; el.className = "text-green-600"; }
-  else if (syncStatus === "error") { el.textContent = "⚠️ 云同步失败（本地可用）"; el.className = "text-red-500"; }
+  else if (syncStatus === "error") { el.textContent = "⚠️ 云同步失败（仅本地）"; el.className = "text-red-500"; }
   else { el.textContent = "📁 本地模式"; el.className = "text-gray-500"; }
-  if (syncBlobId && info) {
+  if (syncBlobId && info && syncStatus !== "error") {
     info.innerHTML = `<span class="text-gray-400">ID: ${syncBlobId.slice(0,8)}…</span> <button onclick="copySyncURL()" class="text-indigo-500 hover:underline">📋 复制同步链接</button>`;
+  } else if (info) {
+    info.innerHTML = `<span class="text-gray-400 text-xs">数据未同步到云端，请使用下方导出/导入功能</span>`;
   }
 }
 
@@ -323,7 +334,7 @@ function copySyncURL() {
   });
 }
 
-async function cloudSave() {
+async function cloudSave(retry = true) {
   const data = JSON.stringify({ s: statuses, f: favCompanies, t: Date.now() });
   try {
     syncStatus = "syncing"; updateSyncUI();
@@ -347,7 +358,13 @@ async function cloudSave() {
     }
     syncStatus = "synced"; updateSyncUI();
   } catch (e) {
+    if (retry) {
+      // 1秒后重试一次
+      setTimeout(() => cloudSave(false), 1000);
+      return;
+    }
     syncStatus = "error"; updateSyncUI();
+    clearSyncFromURL(); // 云端不可靠，清除旧syncId防止误导
   }
 }
 
@@ -367,6 +384,7 @@ async function cloudLoad() {
     syncStatus = "synced"; updateSyncUI();
   } catch (e) {
     syncStatus = "error"; updateSyncUI();
+    clearSyncFromURL(); // 加载失败，旧syncId无效，清除
   }
 }
 
@@ -384,6 +402,33 @@ function exportData() {
   a.download = `秋招投递数据_${new Date().toLocaleDateString("zh-CN").replace(/\//g,"")}.json`;
   a.click();
   URL.revokeObjectURL(url);
+  // 同时复制到剪贴板，方便跨设备粘贴
+  const code = btoa(unescape(encodeURIComponent(data)));
+  navigator.clipboard.writeText(code).then(() => {
+    alert("数据已导出并复制到剪贴板！\n\n请在另一台设备打开此页面，点击「导入数据」→「从剪贴板粘贴」即可同步。");
+  }).catch(() => {
+    alert("数据已导出为文件。\n\n由于浏览器权限限制，未能自动复制到剪贴板。请手动发送文件或复制文件内容到另一台设备导入。");
+  });
+}
+
+function importFromClipboard() {
+  navigator.clipboard.readText().then(text => {
+    try {
+      const data = JSON.parse(decodeURIComponent(escape(atob(text))));
+      if (!data.s) throw new Error("格式错误");
+      if (data.s) statuses = data.s;
+      if (data.f) favCompanies = data.f;
+      saveStatuses();
+      saveFav();
+      debouncedCloudSave();
+      refreshAll();
+      alert("导入成功！数据已同步到当前设备。");
+    } catch (e) {
+      alert("剪贴板内容格式错误，请确保复制的是本页面的导出数据。");
+    }
+  }).catch(() => {
+    alert("无法读取剪贴板，请使用文件导入方式。");
+  });
 }
 
 function importData(file) {
