@@ -182,12 +182,14 @@ body { font-family: 'Microsoft YaHei','PingFang SC',system-ui,sans-serif; backgr
 <section id="section-summary" class="hidden">
   <div class="flex gap-6 border-b mb-2">
     <div class="status-tab active pb-2 px-1 text-sm" data-status="wishlist">💛 心愿单 <span class="text-xs text-gray-400" id="sum-wishlist"></span></div>
+    <div class="status-tab pb-2 px-1 text-sm" data-status="not_started">⏸ 未开始 <span class="text-xs text-gray-400" id="sum-not_started"></span></div>
     <div class="status-tab pb-2 px-1 text-sm" data-status="unsuitable">✗ 不合适 <span class="text-xs text-gray-400" id="sum-unsuitable"></span></div>
     <div class="status-tab pb-2 px-1 text-sm" data-status="applied">✓ 已投 <span class="text-xs text-gray-400" id="sum-applied"></span></div>
     <div class="status-tab pb-2 px-1 text-sm" data-status="in_progress">⏳ 投递中 <span class="text-xs text-gray-400" id="sum-in_progress"></span></div>
     <div class="status-tab pb-2 px-1 text-sm" data-status="ended">🏁 流程结束 <span class="text-xs text-gray-400" id="sum-ended"></span></div>
   </div>
   <div class="flex items-center gap-3 mb-4">
+    <button id="sum-add-btn" class="hidden px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700" onclick="showAddForm()">＋ 新增岗位</button>
     <select id="sum-filter-date" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
       <option value="">全部更新时间</option>
     </select>
@@ -324,6 +326,7 @@ let state = {
 };
 let statuses = {};
 let favCompanies = [];
+let customJobs = [];  // 手动新增的"未开始"岗位
 const scrollPositions = { jobs: 0, fav: 0, summary: 0, resume: 0, deadline: 0 };
 
 // ── 云同步（Firebase Realtime Database，国内可直连，原生支持CORS）──
@@ -379,7 +382,7 @@ function updateSyncUI() {
 }
 
 async function cloudSave(retry = true) {
-  const payload = JSON.stringify({ s: statuses, f: favCompanies, t: Date.now() });
+  const payload = JSON.stringify({ s: statuses, f: favCompanies, c: customJobs, t: Date.now() });
   try {
     syncStatus = "syncing"; updateSyncUI();
     const res = await fetch(FB_URL, {
@@ -413,8 +416,10 @@ async function cloudLoad() {
         // 云端更新，覆盖本地
         statuses = data.s;
         if (data.f) favCompanies = data.f;
+        if (Array.isArray(data.c)) customJobs = data.c;
         localStorage.setItem("job_statuses", JSON.stringify(statuses));
         localStorage.setItem("fav_companies", JSON.stringify(favCompanies));
+        localStorage.setItem("custom_jobs", JSON.stringify(customJobs));
         localStorage.setItem("last_edit_t", String(data.t || Date.now()));
         refreshAll();
       } else {
@@ -439,7 +444,7 @@ function debouncedCloudSave() {
 }
 
 function exportData() {
-  const data = JSON.stringify({ s: statuses, f: favCompanies, date: new Date().toISOString() });
+  const data = JSON.stringify({ s: statuses, f: favCompanies, c: customJobs, date: new Date().toISOString() });
   const blob = new Blob([data], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -463,8 +468,10 @@ function importFromClipboard() {
       if (!data.s) throw new Error("格式错误");
       if (data.s) statuses = data.s;
       if (data.f) favCompanies = data.f;
+      if (Array.isArray(data.c)) customJobs = data.c;
       saveStatuses();
       saveFav();
+      saveCustomJobs();
       debouncedCloudSave();
       refreshAll();
       alert("导入成功！数据已同步到当前设备。");
@@ -483,8 +490,10 @@ function importData(file) {
       const data = JSON.parse(e.target.result);
       if (data.s) statuses = data.s;
       if (data.f) favCompanies = data.f;
+      if (Array.isArray(data.c)) customJobs = data.c;
       saveStatuses();
       saveFav();
+      saveCustomJobs();
       debouncedCloudSave();
       refreshAll();
       alert("导入成功！");
@@ -496,9 +505,11 @@ function importData(file) {
 function loadStatuses() {
   try { statuses = JSON.parse(localStorage.getItem("job_statuses") || "{}"); } catch { statuses = {}; }
   try { favCompanies = JSON.parse(localStorage.getItem("fav_companies") || "[]"); } catch { favCompanies = []; }
+  try { customJobs = JSON.parse(localStorage.getItem("custom_jobs") || "[]"); } catch { customJobs = []; }
 }
 function saveStatuses() { localStorage.setItem("job_statuses", JSON.stringify(statuses)); debouncedCloudSave(); }
 function saveFav() { localStorage.setItem("fav_companies", JSON.stringify(favCompanies)); debouncedCloudSave(); }
+function saveCustomJobs() { localStorage.setItem("custom_jobs", JSON.stringify(customJobs)); debouncedCloudSave(); }
 
 // ── 工具 ──
 const jobMap = {};
@@ -1118,7 +1129,107 @@ function getSummaryJobs() {
   if (state.sumDate) jobs = jobs.filter(j => j.updateDate === state.sumDate);
   return jobs;
 }
+function customCardHTML(j) {
+  const days = j.date ? daysUntil(j.date) : null;
+  let dlBadge = "";
+  if (days !== null) {
+    if (days < 0) dlBadge = `<span class="badge bg-gray-100 text-gray-500">已开始 ${-days} 天</span>`;
+    else if (days === 0) dlBadge = `<span class="badge bg-indigo-100 text-indigo-700">今天开始</span>`;
+    else dlBadge = `<span class="badge bg-blue-100 text-blue-700">${days} 天后开始</span>`;
+  }
+  return `
+  <div class="job-card fade-in bg-white rounded-xl p-4 border border-gray-100">
+    <div class="flex items-start justify-between gap-2 mb-2">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="badge bg-indigo-100 text-indigo-700">⏸ 未开始</span>
+        <span class="font-semibold text-gray-800">${escAttr(j.company)}</span>
+        ${j.position ? `<span class="badge bg-gray-100 text-gray-600">${escAttr(j.position)}</span>` : ""}
+        ${dlBadge}
+      </div>
+      <span class="text-xs text-gray-400 whitespace-nowrap">添加于 ${escAttr(j.createdAt)}</span>
+    </div>
+    ${j.date ? `<div class="text-xs text-gray-500 mb-2">📅 预计开始日期：${escAttr(j.date)}</div>` : ""}
+    ${j.note ? `<div class="text-sm text-gray-600 leading-relaxed mb-2">📝 ${escAttr(j.note)}</div>` : ""}
+    <div class="flex flex-wrap gap-2">
+      <button class="btn-action bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-600" onclick="deleteCustomJob('${j.id}')">🗑 删除</button>
+    </div>
+  </div>`;
+}
+function showAddForm() {
+  const c = document.getElementById("modal-content");
+  c.innerHTML = `
+    <div class="p-6">
+      <div class="flex items-start justify-between mb-4">
+        <h2 class="text-xl font-bold text-gray-800">⏸ 新增未开始岗位</h2>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+      </div>
+      <div class="grid gap-4">
+        <div>
+          <label class="text-sm text-gray-600 mb-1 block">公司 <span class="text-red-500">*</span></label>
+          <input id="cf-company" type="text" placeholder="公司名称（必填）" class="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label class="text-sm text-gray-600 mb-1 block">岗位</label>
+          <input id="cf-position" type="text" placeholder="岗位名称（选填）" class="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label class="text-sm text-gray-600 mb-1 block">预计开始日期</label>
+          <input id="cf-date" type="date" class="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label class="text-sm text-gray-600 mb-1 block">备注</label>
+          <textarea id="cf-note" placeholder="备注（选填）" rows="3" class="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-indigo-500"></textarea>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button onclick="closeModal()" class="px-4 py-2 rounded-lg text-sm bg-gray-100 text-gray-600 hover:bg-gray-200">取消</button>
+        <button onclick="addCustomJob()" class="px-4 py-2 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700">保存</button>
+      </div>
+    </div>`;
+  document.getElementById("modal").classList.remove("hidden");
+}
+function addCustomJob() {
+  const company = document.getElementById("cf-company").value.trim();
+  if (!company) { alert("请填写公司名称"); return; }
+  const position = document.getElementById("cf-position").value.trim();
+  const date = document.getElementById("cf-date").value;
+  const note = document.getElementById("cf-note").value.trim();
+  customJobs.unshift({
+    id: "c_" + Date.now() + "_" + Math.floor(Math.random()*10000),
+    company: company,
+    position: position,
+    date: date,
+    note: note,
+    createdAt: new Date().toLocaleDateString("zh-CN"),
+  });
+  saveCustomJobs();
+  closeModal();
+  renderSummary();
+  updateCounts();
+}
+function deleteCustomJob(id) {
+  const j = customJobs.find(x => x.id === id);
+  if (!j) return;
+  if (!confirm(`确定删除「${j.company}」这条记录吗？\n删除后无法恢复。`)) return;
+  customJobs = customJobs.filter(x => x.id !== id);
+  saveCustomJobs();
+  renderSummary();
+  updateCounts();
+}
 function renderSummary() {
+  const addBtn = document.getElementById("sum-add-btn");
+  if (state.sumStatus === "not_started") {
+    addBtn.classList.remove("hidden");
+    document.getElementById("sum-result-count").textContent = `共 ${customJobs.length} 条`;
+    const list = document.getElementById("summary-list");
+    if (customJobs.length === 0) {
+      list.innerHTML = `<div class="text-center text-gray-400 py-12">暂无记录<br><span class="text-xs">点击上方「＋ 新增岗位」手动添加</span></div>`;
+      return;
+    }
+    list.innerHTML = customJobs.map(j => customCardHTML(j)).join("");
+    return;
+  }
+  addBtn.classList.add("hidden");
   const jobs = getSummaryJobs();
   document.getElementById("sum-result-count").textContent = `共 ${jobs.length} 条`;
   const list = document.getElementById("summary-list");
@@ -1148,8 +1259,9 @@ function updateCounts() {
   });
   COMPANY_CATS.forEach(c => { const el = document.getElementById("fcnt-"+c); if (el) el.textContent = fcounts[c]; });
 
-  const sumCounts = {wishlist:0,unsuitable:0,applied:0,in_progress:0,ended:0};
+  const sumCounts = {wishlist:0,not_started:0,unsuitable:0,applied:0,in_progress:0,ended:0};
   Object.values(statuses).forEach(s => { if (sumCounts[s]!==undefined) sumCounts[s]++; });
+  sumCounts.not_started = customJobs.length;  // 未开始 = 手动新增的岗位数
   Object.entries(sumCounts).forEach(([k,v]) => { const el = document.getElementById("sum-"+k); if (el) el.textContent = "("+v+")"; });
 }
 
