@@ -1487,7 +1487,7 @@ async function loadJobsData() {
   if (JOBS_DATA.length > 0) return;  // 本地内嵌版无需加载
   if (location.protocol === "file:") {
     setLoadProgress(100, "本地文件无法加载外置数据，请使用线上版本");
-    return;
+    throw new Error("file protocol");   // 保留遮罩提示，不显示空白页
   }
   const url = "jobs.json?v=" + DATA_VER;
   try {
@@ -1526,8 +1526,9 @@ async function loadJobsData() {
 // ── 初始化 ──
 async function init() {
   loadStatuses();
-  try { await loadJobsData(); } catch (e) { /* 加载失败已在遮罩提示 */ }
-  hideLoading();
+  let dataOk = true;
+  try { await loadJobsData(); } catch (e) { dataOk = false; }
+  if (dataOk) hideLoading();   // 失败时保留遮罩与错误提示，避免白屏
   await cloudLoad();
   // 每60秒拉一次云端，多设备同时在线也能同步
   setInterval(() => { if (syncStatus !== "syncing" && syncStatus !== "error") cloudLoad(); }, 60000);
