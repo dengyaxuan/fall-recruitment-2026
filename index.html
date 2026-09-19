@@ -254,6 +254,7 @@ const DATA_SOURCES = [
   "https://cdn.jsdelivr.net/gh/dengyaxuan/fall-recruitment-2026@main/",
   "./",
 ];
+let ACTIVE_SOURCE = null;  // 探测通过的源（其余作为备用）
 let dataProgress = null;   // {loaded,total} 后台续传中；null=已全部加载
 const CATS = ["全部","产品","数据分析","商业分析","国际化","物流供应链","其他"];
 const COMPANY_CATS = ["全部","IT互联网","外企","制造业","游戏","其他"];
@@ -1499,13 +1500,35 @@ function setLoadProgress(pct, text) {
   if (bar) bar.style.width = Math.max(6, Math.min(100, pct)) + "%";
   if (txt && text) txt.textContent = text;
 }
-// 取单个分片（自动遍历可用源 + 版本校验）
-async function fetchShard(name) {
-  let lastErr = null;
+// 探测可用源：取 index.json 并校验版本（CDN 可能返回旧数据，ver 不符即弃用）
+async function pickSource() {
   for (const base of DATA_SOURCES) {
     try {
       const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 45000);   // 单片 45 秒未完算失败，换源
+      const timer = setTimeout(() => ctl.abort(), 20000);
+      const res = await fetch(base + "index.json?v=" + DATA_VER, { signal: ctl.signal });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      const idx = JSON.parse(await res.text());
+      if (idx && idx.ver === DATA_VER && idx.files && idx.files.length) return { base, idx };
+      console.warn("数据版本不符，弃用源:", base, idx && idx.ver);
+    } catch (e) {
+      console.warn("源不可用:", base, e.message || e);
+    }
+  }
+  return null;
+}
+
+// 取单个分片（首选已验证的源，失败再遍历其余源）
+async function fetchShard(name) {
+  let lastErr = null;
+  const bases = ACTIVE_SOURCE
+    ? [ACTIVE_SOURCE, ...DATA_SOURCES.filter(b => b !== ACTIVE_SOURCE)]
+    : DATA_SOURCES;
+  for (const base of bases) {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 20000);   // 单片 20 秒未完算失败，换备用源
       const res = await fetch(base + name + "?v=" + DATA_VER, { signal: ctl.signal });
       clearTimeout(timer);
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -1536,8 +1559,10 @@ async function loadJobsData() {
   }
   try {
     setLoadProgress(15, "正在连接数据源…");
-    const idx = await fetchShard("index.json");
-    if (!idx || idx.ver !== DATA_VER) throw new Error("数据版本不匹配，请刷新重试");
+    const picked = await pickSource();
+    if (!picked) throw new Error("所有数据源均不可用");
+    ACTIVE_SOURCE = picked.base;
+    const idx = picked.idx;
     setLoadProgress(30, "正在加载岗位数据…");
     const first = hydrate(await fetchShard(idx.files[0]));
     JOBS_DATA = first;
