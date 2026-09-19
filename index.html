@@ -247,7 +247,14 @@ body { font-family: 'Microsoft YaHei','PingFang SC',system-ui,sans-serif; backgr
 
 <script>
 let JOBS_DATA = [];   // 线上版为空数组，由 loadJobsData() 异步填充
-const DATA_VER = "675440f7"; // 数据版本，变更时自动绕开浏览器缓存
+const DATA_VER = "1c68a8c81dd9"; // 数据版本，变更时自动绕开浏览器缓存
+// 数据分片所在目录（按顺序尝试，前一个失败自动换下一个）
+// jsDelivr 比 GitHub Pages 快数倍；ver 不匹配时会自动回退到本站
+const DATA_SOURCES = [
+  "https://cdn.jsdelivr.net/gh/dengyaxuan/fall-recruitment-2026@main/",
+  "./",
+];
+let dataProgress = null;   // {loaded,total} 后台续传中；null=已全部加载
 const CATS = ["全部","产品","数据分析","商业分析","国际化","物流供应链","其他"];
 const COMPANY_CATS = ["全部","IT互联网","外企","制造业","游戏","其他"];
 const STATUSES = [
@@ -597,8 +604,17 @@ function favBtnHTML(company) {
   return `<button class="btn-action ${on?'bg-indigo-600 text-white hover:bg-indigo-700':'bg-violet-50 text-violet-600 hover:bg-violet-100'}" onclick="toggleFavBtn(this)" data-company="${escAttr(company)}">${on?'★ 已收藏':'☆ 收藏公司'}</button>`;
 }
 
+// 分类映射：线上精简版只有 pc（非空项），本地内嵌版是完整 positionCategories
+function posCats(j) { return j.pc || j.positionCategories || {}; }
+
+// 后台续传中，提示当前结果基于部分数据
+function progressSuffix() {
+  return dataProgress && dataProgress.loaded < dataProgress.total
+    ? `　⏳ 数据加载中 ${dataProgress.loaded}/${dataProgress.total}` : "";
+}
+
 function jobCardHTML(j, activeCat, ctx) {
-  const matched = activeCat !== "全部" && activeCat !== "其他" ? j.positionCategories : {};
+  const matched = activeCat !== "全部" && activeCat !== "其他" ? posCats(j) : {};
   const matchedPositions = Object.entries(matched).filter(([pos,cats]) => cats.includes(activeCat)).map(([pos]) => pos);
   const st = statuses[j.id];
   const isFav = favSet().has(j.company);
@@ -736,7 +752,7 @@ function renderMoreControl(boxId, total, shown, fnName) {
 function renderJobs(reset) {
   const filtered = getFilteredJobs();
   const list = document.getElementById("job-list");
-  document.getElementById("result-count").textContent = `共 ${filtered.length} 条`;
+  document.getElementById("result-count").textContent = `共 ${filtered.length} 条` + progressSuffix();
   if (reset !== false) state.shown = state.perPage;
   if (state.shown > filtered.length) state.shown = filtered.length;
   if (filtered.length === 0) {
@@ -837,7 +853,7 @@ function renderDeadline(reset) {
   state.dlShown = n;
   const pageJobs = filtered.slice(0, n);
 
-  document.getElementById("dl-result-count").textContent = `共 ${filtered.length} 条`;
+  document.getElementById("dl-result-count").textContent = `共 ${filtered.length} 条` + progressSuffix();
   const list = document.getElementById("deadline-list");
   if (pageJobs.length === 0) {
     list.innerHTML = `<div class="text-center text-gray-400 py-12">没有符合条件的岗位</div>`;
@@ -1128,7 +1144,7 @@ function setStatus(jobId, status) {
 function showDetail(jobId) {
   const j = jobMap[jobId];
   if (!j) return;
-  const matched = j.positionCategories;
+  const matched = posCats(j);
   const c = document.getElementById("modal-content");
   c.innerHTML = `
     <div class="p-6">
@@ -1483,44 +1499,84 @@ function setLoadProgress(pct, text) {
   if (bar) bar.style.width = Math.max(6, Math.min(100, pct)) + "%";
   if (txt && text) txt.textContent = text;
 }
+// 取单个分片（自动遍历可用源 + 版本校验）
+async function fetchShard(name) {
+  let lastErr = null;
+  for (const base of DATA_SOURCES) {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 45000);   // 单片 45 秒未完算失败，换源
+      const res = await fetch(base + name + "?v=" + DATA_VER, { signal: ctl.signal });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const txt = await res.text();
+      return JSON.parse(txt);
+    } catch (e) {
+      lastErr = e;
+      console.warn("shard failed from " + base + name + ":", e.message || e);
+    }
+  }
+  throw lastErr || new Error("all sources failed: " + name);
+}
+
+// 精简数据还原（positionsText 由 positions 推导；pc 为精简后的分类映射）
+function hydrate(list) {
+  for (const j of list) {
+    if (j.positionsText === undefined) j.positionsText = (j.positions || []).join("、");
+  }
+  return list;
+}
+
+// 加载首片：完成即可交互，不等全量
 async function loadJobsData() {
   if (JOBS_DATA.length > 0) return;  // 本地内嵌版无需加载
   if (location.protocol === "file:") {
     setLoadProgress(100, "本地文件无法加载外置数据，请使用线上版本");
-    throw new Error("file protocol");   // 保留遮罩提示，不显示空白页
+    throw new Error("file protocol");
   }
-  const url = "jobs.json?v=" + DATA_VER;
   try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const total = parseInt(res.headers.get("content-length") || "0", 10);
-    if (!res.body || !res.body.getReader) {
-      JOBS_DATA = await res.json();
-    } else {
-      const reader = res.body.getReader();
-      const chunks = [];
-      let got = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value); got += value.length;
-        if (total) setLoadProgress(got / total * 90, `正在加载岗位数据… ${(got/1048576).toFixed(1)} MB`);
-        else setLoadProgress(Math.min(90, 30 + got / 200000), `正在加载岗位数据… ${(got/1048576).toFixed(1)} MB`);
-      }
-      const buf = new Uint8Array(got);
-      let off = 0;
-      for (const c of chunks) { buf.set(c, off); off += c.length; }
-      const txt = new TextDecoder("utf-8").decode(buf);
-      setLoadProgress(96, "正在解析岗位数据…");
-      JOBS_DATA = JSON.parse(txt);
-    }
+    setLoadProgress(15, "正在连接数据源…");
+    const idx = await fetchShard("index.json");
+    if (!idx || idx.ver !== DATA_VER) throw new Error("数据版本不匹配，请刷新重试");
+    setLoadProgress(30, "正在加载岗位数据…");
+    const first = hydrate(await fetchShard(idx.files[0]));
+    JOBS_DATA = first;
     buildJobMap();
+    dataProgress = { loaded: first.length, total: idx.total, files: idx.files, next: 1 };
     setLoadProgress(100, "加载完成");
   } catch (e) {
-    setLoadProgress(100, "岗位数据加载失败，请刷新页面重试");
+    setLoadProgress(100, "岗位数据加载失败，请检查网络后刷新重试");
     console.error("loadJobsData failed:", e);
     throw e;
   }
+}
+
+// 后台续传剩余分片，逐片并入列表
+async function loadRemainingShards() {
+  const p = dataProgress;
+  if (!p) return;
+  while (p.next < p.files.length) {
+    const name = p.files[p.next];
+    try {
+      const sh = hydrate(await fetchShard(name));
+      JOBS_DATA = JOBS_DATA.concat(sh);
+      buildJobMap();
+      p.loaded = JOBS_DATA.length;
+      p.next += 1;
+      updateCounts();
+      if (state.section === "jobs") renderJobs();
+      else if (state.section === "deadline") renderDeadline();
+      else if (state.section === "fav") renderFav();
+      else if (state.section === "summary") renderSummary();
+    } catch (e) {
+      console.warn("后台分片加载中断:", name, e);
+      return;   // 静默失败，保留已加载部分
+    }
+  }
+  dataProgress = null;   // 全部就绪
+  updateCounts();
+  if (state.section === "jobs") renderJobs();
+  else if (state.section === "deadline") renderDeadline();
 }
 
 // ── 初始化 ──
@@ -1528,7 +1584,10 @@ async function init() {
   loadStatuses();
   let dataOk = true;
   try { await loadJobsData(); } catch (e) { dataOk = false; }
-  if (dataOk) hideLoading();   // 失败时保留遮罩与错误提示，避免白屏
+  if (dataOk) {
+    hideLoading();          // 首片就绪即可进入页面，不等全量
+    loadRemainingShards();  // 后台续传剩余分片，不阻塞
+  }
   await cloudLoad();
   // 每60秒拉一次云端，多设备同时在线也能同步
   setInterval(() => { if (syncStatus !== "syncing" && syncStatus !== "error") cloudLoad(); }, 60000);
