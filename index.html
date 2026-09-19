@@ -1353,10 +1353,12 @@ function initFilters() {
   const fillSelect = (id, set) => {
     const el = document.getElementById(id);
     const head = el.options.length ? el.options[0].outerHTML : '<option value="">全部</option>';
-    el.innerHTML = head;      // 幂等：分片加载完成后会再次调用，避免选项重复堆积
+    const prev = el.value;    // 重建后还原用户已选项（分片加载完会再调一次）
+    el.innerHTML = head;      // 幂等：避免选项重复堆积
     [...set].sort().forEach(v => {
       const o = document.createElement("option"); o.value=v; o.textContent=v; el.appendChild(o);
     });
+    if (prev && [...el.options].some(o => o.value === prev)) el.value = prev;
   };
   fillSelect("filter-city", cities);
   fillSelect("filter-edu", edus);
@@ -1370,10 +1372,12 @@ function initFilters() {
   const dateFill = (id) => {
     const el = document.getElementById(id);
     const head = el.options.length ? el.options[0].outerHTML : '<option value="">全部</option>';
+    const prev = el.value;
     el.innerHTML = head;      // 同上，幂等
     [...dates].sort((a,b) => b.localeCompare(a)).forEach(v => {
       const o = document.createElement("option"); o.value=v; o.textContent=v; el.appendChild(o);
     });
+    if (prev && [...el.options].some(o => o.value === prev)) el.value = prev;
   };
   dateFill("filter-date");
   dateFill("sum-filter-date");
@@ -1627,9 +1631,10 @@ function hydrate(list) {
   return list;
 }
 
+// 后台分片并入后的重绘：传 false 保持"已看条数"，避免列表被打回 30 条、滚动位置跳动
 function rerenderCurrent() {
-  if (state.section === "jobs") renderJobs();
-  else if (state.section === "deadline") renderDeadline();
+  if (state.section === "jobs") renderJobs(false);
+  else if (state.section === "deadline") renderDeadline(false);
   else if (state.section === "fav") renderFav();
   else if (state.section === "summary") renderSummary();
 }
