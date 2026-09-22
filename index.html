@@ -123,11 +123,15 @@ body { font-family: 'Microsoft YaHei','PingFang SC',system-ui,sans-serif; backgr
     <select id="dl-filter-type" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
       <option value="">全部类型</option>
     </select>
+    <select id="dl-filter-ctype" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+      <option value="">全部企业类型</option>
+    </select>
     <select id="dl-filter-deadline" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
       <option value="">全部截止时间</option>
       <option value="today">今天截止</option>
       <option value="3d">3天内截止</option>
       <option value="7d">7天内截止</option>
+      <option value="21d">21天内截止</option>
       <option value="30d">30天内截止</option>
     </select>
     <label class="flex items-center gap-1 text-sm text-gray-500">
@@ -162,6 +166,9 @@ body { font-family: 'Microsoft YaHei','PingFang SC',system-ui,sans-serif; backgr
     </select>
     <select id="filter-type" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
       <option value="">全部类型</option>
+    </select>
+    <select id="filter-ctype" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+      <option value="">全部企业类型</option>
     </select>
     <select id="filter-date" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
       <option value="">全部更新时间</option>
@@ -354,6 +361,7 @@ let state = {
   city: "",
   edu: "",
   rtype: "",
+  ctype: "",      // 企业类型：民企/央国企/外企…
   updateDate: "",
   linkOnly: false,
   favFilter: "",
@@ -370,6 +378,7 @@ let state = {
   dlCity: "",
   dlEdu: "",
   dlType: "",
+  dlCType: "",   // 企业类型
   dlDeadline: "",
   dlLinkOnly: false,
   dlPage: 1,
@@ -602,6 +611,7 @@ function getFilteredJobs() {
     if (state.city && !j.city.includes(state.city)) return false;
     if (state.edu && !j.education.includes(state.edu)) return false;
     if (state.rtype && !j.recruitType.includes(state.rtype)) return false;
+    if (state.ctype && !j.companyType.includes(state.ctype)) return false;
     if (state.updateDate && j.updateDate !== state.updateDate) return false;
     if (state.linkOnly && !j.applyLink) return false;
     return true;
@@ -833,6 +843,7 @@ function getDeadlineJobs() {
     if (state.dlCity && !j.city.includes(state.dlCity)) return false;
     if (state.dlEdu && !j.education.includes(state.dlEdu)) return false;
     if (state.dlType && !j.recruitType.includes(state.dlType)) return false;
+    if (state.dlCType && !j.companyType.includes(state.dlCType)) return false;
     if (state.dlLinkOnly && !j.applyLink) return false;
     if (state.dlDeadline) {
       const d = daysUntil(j.deadline);
@@ -841,6 +852,7 @@ function getDeadlineJobs() {
         case "today": return d === 0;
         case "3d": return d >= 0 && d <= 3;
         case "7d": return d >= 0 && d <= 7;
+        case "21d": return d >= 0 && d <= 21;
         case "30d": return d >= 0 && d <= 30;
       }
     }
@@ -1343,11 +1355,12 @@ function updateCounts() {
 
 // ── 筛选器选项 ──
 function initFilters() {
-  const cities = new Set(), edus = new Set(), types = new Set(), dates = new Set();
+  const cities = new Set(), edus = new Set(), types = new Set(), dates = new Set(), ctypes = new Set();
   JOBS_DATA.forEach(j => {
     if (j.city) j.city.split(/[、,，]/).forEach(c => { c=c.trim(); if(c) cities.add(c); });
     if (j.education) edus.add(j.education);
     if (j.recruitType) types.add(j.recruitType);
+    if (j.companyType) ctypes.add(j.companyType);
     if (j.updateDate) dates.add(j.updateDate);
   });
   const fillSelect = (id, set) => {
@@ -1363,12 +1376,14 @@ function initFilters() {
   fillSelect("filter-city", cities);
   fillSelect("filter-edu", edus);
   fillSelect("filter-type", types);
+  fillSelect("filter-ctype", ctypes);
   fillSelect("fav-filter-city", cities);
   fillSelect("fav-filter-edu", edus);
   fillSelect("fav-filter-type", types);
   fillSelect("dl-filter-city", cities);
   fillSelect("dl-filter-edu", edus);
   fillSelect("dl-filter-type", types);
+  fillSelect("dl-filter-ctype", ctypes);
   const dateFill = (id) => {
     const el = document.getElementById(id);
     const head = el.options.length ? el.options[0].outerHTML : '<option value="">全部</option>';
@@ -1768,6 +1783,7 @@ async function init() {
   document.getElementById("filter-city").addEventListener("change", e => { state.city=e.target.value; state.page=1; renderJobs(); });
   document.getElementById("filter-edu").addEventListener("change", e => { state.edu=e.target.value; state.page=1; renderJobs(); });
   document.getElementById("filter-type").addEventListener("change", e => { state.rtype=e.target.value; state.page=1; renderJobs(); });
+  document.getElementById("filter-ctype").addEventListener("change", e => { state.ctype=e.target.value; state.page=1; renderJobs(); });
   document.getElementById("filter-date").addEventListener("change", e => { state.updateDate=e.target.value; state.page=1; renderJobs(); });
   document.getElementById("filter-link").addEventListener("change", e => { state.linkOnly=e.target.checked; state.page=1; renderJobs(); });
   // 心选公司筛选
@@ -1797,6 +1813,7 @@ async function init() {
   document.getElementById("dl-filter-city").addEventListener("change", e => { state.dlCity=e.target.value; state.dlPage=1; renderDeadline(); });
   document.getElementById("dl-filter-edu").addEventListener("change", e => { state.dlEdu=e.target.value; state.dlPage=1; renderDeadline(); });
   document.getElementById("dl-filter-type").addEventListener("change", e => { state.dlType=e.target.value; state.dlPage=1; renderDeadline(); });
+  document.getElementById("dl-filter-ctype").addEventListener("change", e => { state.dlCType=e.target.value; state.dlPage=1; renderDeadline(); });
   document.getElementById("dl-filter-deadline").addEventListener("change", e => { state.dlDeadline=e.target.value; state.dlPage=1; renderDeadline(); });
   document.getElementById("dl-filter-link").addEventListener("change", e => { state.dlLinkOnly=e.target.checked; state.dlPage=1; renderDeadline(); });
   // 弹窗
