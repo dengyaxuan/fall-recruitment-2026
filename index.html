@@ -173,6 +173,14 @@ body { font-family: 'Microsoft YaHei','PingFang SC',system-ui,sans-serif; backgr
     <select id="filter-date" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
       <option value="">全部更新时间</option>
     </select>
+    <select id="filter-opened" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+      <option value="">全部开放时间</option>
+      <option value="today">今天新开放</option>
+      <option value="3d">3天内新开放</option>
+      <option value="7d">7天内新开放</option>
+      <option value="21d">21天内新开放</option>
+      <option value="30d">30天内新开放</option>
+    </select>
     <label class="flex items-center gap-1 text-sm text-gray-500">
       <input type="checkbox" id="filter-link" class="rounded"> 仅有链接
     </label>
@@ -363,6 +371,7 @@ let state = {
   rtype: "",
   ctype: "",      // 企业类型：民企/央国企/外企…
   updateDate: "",
+  openedWithin: "",   // 新开放时间窗：today / 3d / 7d / 21d / 30d
   linkOnly: false,
   favFilter: "",
   favCat: "全部",
@@ -613,6 +622,17 @@ function getFilteredJobs() {
     if (state.rtype && !j.recruitType.includes(state.rtype)) return false;
     if (state.ctype && !j.companyType.includes(state.ctype)) return false;
     if (state.updateDate && j.updateDate !== state.updateDate) return false;
+    if (state.openedWithin) {
+      const ago = daysSince(j.updateDate);   // 距今多少天前开放
+      if (ago === null) return false;
+      switch (state.openedWithin) {
+        case "today": if (ago !== 0) return false; break;
+        case "3d":   if (ago > 3) return false; break;
+        case "7d":   if (ago > 7) return false; break;
+        case "21d":  if (ago > 21) return false; break;
+        case "30d":  if (ago > 30) return false; break;
+      }
+    }
     if (state.linkOnly && !j.applyLink) return false;
     return true;
   });
@@ -815,6 +835,14 @@ function daysUntil(dl) {
   if (!d) return null;
   const now = new Date(); now.setHours(0,0,0,0);
   return Math.ceil((d.getTime() - now.getTime()) / 86400000);
+}
+// 距今多少天前开放招聘（负数=未来日期，按 0 处理）
+function daysSince(ds) {
+  const d = parseDeadline(ds);
+  if (!d) return null;
+  const now = new Date(); now.setHours(0,0,0,0);
+  const diff = Math.floor((now.getTime() - d.getTime()) / 86400000);
+  return diff < 0 ? 0 : diff;
 }
 function deadlineLabel(dl) {
   const d = daysUntil(dl);
@@ -1784,6 +1812,7 @@ async function init() {
   document.getElementById("filter-edu").addEventListener("change", e => { state.edu=e.target.value; state.page=1; renderJobs(); });
   document.getElementById("filter-type").addEventListener("change", e => { state.rtype=e.target.value; state.page=1; renderJobs(); });
   document.getElementById("filter-ctype").addEventListener("change", e => { state.ctype=e.target.value; state.page=1; renderJobs(); });
+  document.getElementById("filter-opened").addEventListener("change", e => { state.openedWithin=e.target.value; state.page=1; renderJobs(); });
   document.getElementById("filter-date").addEventListener("change", e => { state.updateDate=e.target.value; state.page=1; renderJobs(); });
   document.getElementById("filter-link").addEventListener("change", e => { state.linkOnly=e.target.checked; state.page=1; renderJobs(); });
   // 心选公司筛选
