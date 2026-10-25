@@ -86,6 +86,7 @@ body { font-family: 'Microsoft YaHei','PingFang SC',system-ui,sans-serif; backgr
       <span class="font-bold text-lg text-gray-800">秋招投递管理</span>
     </div>
     <div class="flex gap-1">
+      <button class="nav-btn px-4 py-2 rounded-lg text-sm font-medium text-gray-600" data-section="custom">🎯 定制</button>
       <button class="nav-btn px-4 py-2 rounded-lg text-sm font-medium text-gray-600" data-section="deadline">⏰ 倒计时</button>
       <button class="nav-btn active px-4 py-2 rounded-lg text-sm font-medium text-gray-600" data-section="jobs">岗位推荐</button>
       <button class="nav-btn px-4 py-2 rounded-lg text-sm font-medium text-gray-600" data-section="fav">⭐ 心选公司</button>
@@ -109,6 +110,64 @@ body { font-family: 'Microsoft YaHei','PingFang SC',system-ui,sans-serif; backgr
 </div>
 
 <main class="max-w-7xl mx-auto px-4 py-6">
+
+<!-- ========== 定制（简历匹配）========== -->
+<section id="section-custom" class="hidden">
+  <div class="bg-gradient-to-r from-indigo-50 to-violet-50 rounded-xl p-4 mb-4 border border-indigo-100">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <div class="text-sm font-semibold text-indigo-800 mb-1">🎯 简历定制推荐</div>
+        <div class="text-xs text-gray-600 leading-relaxed">
+          基于你的简历画像匹配：<span class="font-medium text-indigo-700">策略运营 · 数据分析 · 供应链/采购 · 产品 · 国际化</span>；
+          技能 <span class="font-medium text-indigo-700">SQL / Python / Excel / Power BI / 看板指标</span>；
+          语言 <span class="font-medium text-indigo-700">英语六级+双学位、法语入门</span>。
+          已排除标记过的岗位，只推没投过的。
+        </div>
+      </div>
+      <button onclick="refreshCustom()" class="flex-shrink-0 px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 whitespace-nowrap">
+        🔄 换一批
+      </button>
+    </div>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-3 mb-4">
+    <input id="cz-search-input" type="text" placeholder="搜索公司名 / 岗位 / 城市…" class="flex-1 min-w-[200px] px-4 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-indigo-500">
+    <select id="cz-filter-city" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+      <option value="">全部城市</option>
+    </select>
+    <select id="cz-filter-edu" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+      <option value="">全部学历</option>
+    </select>
+    <select id="cz-filter-type" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+      <option value="">全部类型</option>
+    </select>
+    <select id="cz-filter-ctype" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+      <option value="">全部企业类型</option>
+    </select>
+    <select id="cz-filter-opened" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+      <option value="">全部开放时间</option>
+      <option value="today">今天新开放</option>
+      <option value="3d">3天内新开放</option>
+      <option value="7d">7天内新开放</option>
+      <option value="21d">21天内新开放</option>
+      <option value="30d">30天内新开放</option>
+    </select>
+    <select id="cz-filter-deadline" class="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+      <option value="">全部截止时间</option>
+      <option value="today">今天截止</option>
+      <option value="3d">3天内截止</option>
+      <option value="7d">7天内截止</option>
+      <option value="21d">21天内截止</option>
+      <option value="30d">30天内截止</option>
+    </select>
+    <label class="flex items-center gap-1 text-sm text-gray-500">
+      <input type="checkbox" id="cz-filter-link" class="rounded"> 仅有链接
+    </label>
+    <span id="cz-result-count" class="text-sm text-gray-400 ml-auto"></span>
+  </div>
+
+  <div id="custom-list" class="grid gap-3"></div>
+</section>
 
 <!-- ========== 倒计时 ========== -->
 <section id="section-deadline" class="hidden">
@@ -391,11 +450,144 @@ let state = {
   dlDeadline: "",
   dlLinkOnly: false,
   dlPage: 1,
+  czSearch: "",
+  czCity: "",
+  czEdu: "",
+  czType: "",
+  czCType: "",
+  czOpened: "",
+  czDeadline: "",
+  czLinkOnly: false,
+  czSeed: 0,          // 换一批计数
+  czShownIds: [],     // 上一批展示的 ID，用于降权避免连续重复
+  czLastPicked: [],   // 当前批次，切走再切回时保持不变
 };
+
+// ── 简历画像（来源：邓雅轩-数据策略.pdf）──
+// 应用经济学硕士 + 工程管理/英语双学位本科；
+// 熊猫外卖全球中台策略 / 特斯拉车辆数据分析运营 / 蓝色光标采购运营 / 战略咨询项目助理
+const RESUME = {
+  // 核心职能（权重最高）
+  core: {
+    "策略运营": 10, "运营": 6, "策略": 6, "增长": 6, "商业化": 7, "用户运营": 7,
+    "数据分析": 10, "数据分析师": 12, "数据运营": 9, "商业分析": 10, "经营分析": 9,
+    "数据": 4, "指标": 5, "看板": 5, "报表": 4, "BI": 5, "数据治理": 5,
+    "供应链": 10, "物流": 8, "采购": 9, "仓储": 6, "关务": 6, "运输": 5,
+    "配送": 5, "履约": 6, "计划": 4, "物控": 5, "船务": 5, "航运": 5,
+    "产品": 7, "产品经理": 9, "产品运营": 8, "产品策划": 7, "需求分析": 6,
+    "国际化": 8, "海外": 8, "全球": 6, "跨境": 8, "出海": 8, "国际": 5,
+    "项目管理": 5, "流程优化": 6, "资产管理": 5, "商务": 5, "市场": 4,
+    "咨询": 7, "行业研究": 7, "战略": 6, "投资": 4, "管培": 3, "培训生": 3,
+  },
+  // 工具技能（中权重）
+  tools: {
+    "SQL": 6, "Python": 6, "Excel": 4, "Power BI": 5, "BI": 4, "SPSS": 4,
+    "RPA": 5, "VBA": 4, "数据可视化": 5, "自动化": 4, "Tableau": 5,
+  },
+  // 语言相关（匹配海外岗时加成）
+  lang: { "英语": 4, "法语": 6, "外语": 4, "小语种": 6, "翻译": 3 },
+  // 行业倾向
+  industry: {
+    "互联网": 6, "电子商务": 6, "电商平台": 6, "本地生活": 7, "外卖": 7, "O2O": 7,
+    "汽车": 6, "新能源汽车": 7, "出行": 5, "物流": 6, "咨询": 7, "专业服务": 5,
+    "零售": 4, "快消": 5, "贸易": 5, "供应链": 6, "跨境": 6,
+  },
+  // 企业类型偏好（偏好外企氛围）
+  typePref: { "外企": 9, "外企·合资": 7, "合资": 7, "民企": 2, "央国企": 0, "国企": 0, "银行": 1, "事业单位": 0 },
+  // 学历：硕士，博士岗不匹配
+  edu: "硕士",
+};
+
+// 明显不相关的岗位（硬研发/美术/游戏等），命中占比高则降分
+const NEGATIVE = ["游戏","美术","动画","音效","原画","编剧","芯片","IC设计","版图","射频","天线",
+  "FPGA","嵌入式","单片机","模具","焊接","铸造","注塑","化工工艺","临床","医药研发","药物",
+  "电池材料","半导体工艺","光学设计","机械设计","结构设计","热设计","流体","力学仿真","土木",
+  "建筑设计","施工","测绘","地质","采矿","冶炼","纺织","染整","养殖","种植","兽医","护理"];
+
+// 岗位与简历的匹配打分（0-100）
+function matchScore(j) {
+  const positions = (j.positions && j.positions.length) ? j.positions
+    : (j.positionsText || "").split(/[、,，；;/]+/).map(s => s.trim()).filter(Boolean);
+  const posText = j.positionsText || positions.join("、");
+  const all = (posText + " " + (j.industry || "") + " " + (j.city || "")).toLowerCase();
+  const n = Math.max(positions.length, 1);
+  let raw = 0;
+  const hits = new Set();
+
+  // ── 逐条岗位判定（关键：按"命中岗位数"，不是"命中关键词数"，
+  //    否则列 87 个岗位的海招公司会靠堆词白拿高分）──
+  let hitPos = 0, hitTool = 0, hitNeg = 0;
+  for (const p of positions) {
+    const pl = p.toLowerCase();
+    let hc = false;
+    for (const kw of Object.keys(RESUME.core)) if (pl.includes(kw.toLowerCase())) { hc = true; hits.add(kw); }
+    if (hc) hitPos++;
+    let ht = false;
+    for (const kw of Object.keys(RESUME.tools)) if (pl.includes(kw.toLowerCase())) { ht = true; hits.add(kw); }
+    if (ht) hitTool++;
+    for (const kw of NEGATIVE) if (pl.includes(kw)) { hitNeg++; break; }
+  }
+  const rate = hitPos / n;                       // 命中率：岗位越聚焦越高
+  const focus = 0.45 + 0.55 * Math.min(rate * 3, 1);   // 命中率因子 0.45~1.0
+
+  // 1) 核心职能：命中岗位数 × 命中率因子（上限 28）
+  let core = Math.min(hitPos * 7, 28) * focus;
+  // 海招惩罚：一次性招 25 个以上岗位的，针对性弱
+  if (positions.length > 25) core *= 0.7;
+  raw += core;
+
+  // 2) 方向分类命中（上限 18）：产品/数据分析/商业分析/国际化/物流供应链
+  const cats = j.categories || [];
+  const DIRS = ["产品", "数据分析", "商业分析", "国际化", "物流供应链"];
+  const catHit = cats.filter(c => DIRS.includes(c));
+  raw += Math.min(catHit.length * 7, 18);
+
+  // 3) 工具技能：同样按命中岗位数 × 命中率因子（上限 10）
+  raw += Math.min(hitTool * 5, 10) * (0.5 + 0.5 * Math.min(hitTool / n * 3, 1));
+
+  // 4) 企业类型偏好（上限 9）
+  raw += RESUME.typePref[j.companyType] || 0;
+
+  // 5) 海外/港澳工作地（语言能力 + 出海意向，上限 8）
+  const city = j.city || "";
+  if (/海外|全球|东南亚|国外/.test(city)) raw += 8;
+  else if (/香港|澳门|台湾/.test(city)) raw += 6;
+
+  // 6) 行业匹配（上限 7）
+  let indSum = 0;
+  for (const [kw, w] of Object.entries(RESUME.industry)) {
+    if ((j.industry || "").includes(kw)) { indSum += w; }
+  }
+  raw += Math.min(indSum, 7);
+
+  // 7) 语言岗加成（上限 6）
+  let langSum = 0;
+  for (const [kw, w] of Object.entries(RESUME.lang)) {
+    if (all.includes(kw)) langSum += w;
+  }
+  raw += Math.min(langSum, 6);
+
+  // 8) 学历：博士岗降分，硕士/本科及以上加分
+  const edu = j.education || "";
+  if (edu.includes("博士")) raw -= 18;
+  else if (edu.includes("硕士") || edu.includes("本科及以上")) raw += 3;
+
+  // 9) 负向岗位占比过高（如整表都是游戏/芯片/化工研发）→ 明确不匹配
+  if (hitNeg / n > 0.4) raw -= 10;
+
+  // 10) 截止状态：已过期重罚，有明确截止日轻微加权（促决策）
+  const d = daysUntil(j.deadline);
+  if (d !== null && d < 0) raw -= 25;
+  else if (d !== null && d <= 21) raw += 3;
+
+  // 归一化到 0-100（raw 理论上限约 90）
+  const score = Math.max(0, Math.min(100, Math.round(raw * 1.12)));
+  return { score, hits: [...hits].slice(0, 6), cats: catHit };
+}
 let statuses = {};
 let favCompanies = [];
 let customJobs = [];  // 手动新增的"未开始"岗位
-const scrollPositions = { jobs: 0, fav: 0, summary: 0, resume: 0, deadline: 0 };
+const scrollPositions = { jobs: 0, fav: 0, summary: 0, resume: 0, deadline: 0, custom: 0 };
 
 // ── 云同步（Firebase Realtime Database，国内可直连，原生支持CORS）──
 const FB_DB = "https://webuse-e270d-default-rtdb.asia-southeast1.firebasedatabase.app";
@@ -594,6 +786,101 @@ function sortPhdLast(arr) {
   return normal.concat(phd);
 }
 
+// ── 定制界面：简历匹配推荐 ──
+const CUSTOM_SIZE = 15;      // 一次展示 15 条
+const CUSTOM_POOL = 400;     // 从匹配分最高的 400 条里随机抽，保证"高匹配"前提下的多样性
+
+// 先按筛选条件过滤（与其他界面同构的 AND 叠加），再打分排序
+function getCustomPool() {
+  const pool = JOBS_DATA.filter(j => {
+    if (HIDDEN_STATUSES.includes(statuses[j.id])) return false;   // 已投/不合适/进行中/结束 都不再推
+    if (state.czSearch) {
+      const q = state.czSearch.toLowerCase();
+      const hay = (j.company + " " + j.positionsText + " " + j.city + " " + j.industry).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    if (state.czCity && !j.city.includes(state.czCity)) return false;
+    if (state.czEdu && !j.education.includes(state.czEdu)) return false;
+    if (state.czType && !j.recruitType.includes(state.czType)) return false;
+    if (state.czCType && !j.companyType.includes(state.czCType)) return false;
+    if (state.czOpened) {
+      const ago = daysSince(j.updateDate);
+      if (ago === null) return false;
+      const lim = { today:0, "3d":3, "7d":7, "21d":21, "30d":30 }[state.czOpened];
+      if (ago > lim) return false;
+    }
+    if (state.czDeadline) {
+      const d = daysUntil(j.deadline);
+      if (d === null) return false;
+      const lim = { today:0, "3d":3, "7d":7, "21d":21, "30d":30 }[state.czDeadline];
+      if (d < 0 || d > lim) return false;
+    }
+    if (state.czLinkOnly && !j.applyLink) return false;
+    return true;
+  });
+  return pool.map(j => ({ j, m: matchScore(j) }))
+             .sort((a, b) => b.m.score - a.m.score)
+             .slice(0, CUSTOM_POOL);
+}
+
+// 加权随机抽 15 条：分数越高权重越大；同时尽量避开上一批已展示的
+function pickCustom(list) {
+  if (list.length === 0) return [];
+  const prev = new Set(state.czShownIds);
+  const scored = list.map((it, idx) => {
+    let w = Math.pow(it.m.score, 2.2) + 1;       // 高分显著更容易被抽中
+    if (prev.has(it.j.id)) w *= 0.12;            // 上一批出现过的降权，不绝对排除
+    return { it, w, idx };
+  });
+  const picked = [];
+  const used = new Set();
+  const pool = scored.slice();
+  while (picked.length < CUSTOM_SIZE && pool.length) {
+    let total = 0;
+    for (const p of pool) total += p.w;
+    if (total <= 0) break;
+    let r = Math.random() * total;
+    let k = 0;
+    for (; k < pool.length; k++) { r -= pool[k].w; if (r <= 0) break; }
+    if (k >= pool.length) k = pool.length - 1;
+    picked.push(pool[k].it);
+    used.add(pool[k].idx);
+    pool.splice(k, 1);
+  }
+  state.czShownIds = picked.map(p => p.j.id);
+  // 展示时按分数从高到低排，读起来更顺
+  picked.sort((a, b) => b.m.score - a.m.score);
+  return picked;
+}
+
+// reshuffle=true 才重新抽（点「换一批」或筛选条件变化时）；切回界面时保持原批次
+function renderCustom(reshuffle) {
+  const list = document.getElementById("custom-list");
+  if (!list) return;
+  const pool = getCustomPool();
+  const picked = reshuffle || !state.czLastPicked.length ? pickCustom(pool) : state.czLastPicked;
+  state.czLastPicked = picked;
+  const cnt = document.getElementById("cz-result-count");
+  if (cnt) {
+    cnt.textContent = pool.length
+      ? `候选池 ${pool.length} 条 · 展示 ${picked.length} 条` + progressSuffix()
+      : "没有符合条件的岗位";
+  }
+  if (!picked.length) {
+    list.innerHTML = `<div class="text-center text-gray-400 py-12">没有符合条件的岗位${
+      JOBS_DATA.length ? "，试试放宽筛选条件或点「换一批」" : ""}</div>`;
+    return;
+  }
+  list.innerHTML = picked.map(p => jobCardHTML(p.j, "全部", "custom", p.m)).join("");
+}
+
+function refreshCustom() {
+  state.czSeed += 1;
+  renderCustom(true);
+  const el = document.getElementById("section-custom");
+  if (el) window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
 function compCatsOf(j) {
   const ind = j.industry || "";
   const type = j.companyType || "";
@@ -655,7 +942,7 @@ function progressSuffix() {
     ? `　⏳ 数据加载中 ${dataProgress.loaded}/${dataProgress.total}` : "";
 }
 
-function jobCardHTML(j, activeCat, ctx) {
+function jobCardHTML(j, activeCat, ctx, match) {
   const matched = activeCat !== "全部" && activeCat !== "其他" ? posCats(j) : {};
   const matchedPositions = Object.entries(matched).filter(([pos,cats]) => cats.includes(activeCat)).map(([pos]) => pos);
   const st = statuses[j.id];
@@ -670,6 +957,22 @@ function jobCardHTML(j, activeCat, ctx) {
     j.companyType === "国企" || j.companyType === "央国企" ? "bg-red-100 text-red-700" :
     "bg-gray-100 text-gray-600";
   const rtypeBadge = j.recruitType ? `<span class="badge bg-amber-100 text-amber-700">${j.recruitType}</span>` : "";
+  // 定制界面：匹配度徽章 + 命中理由
+  let matchBlock = "";
+  if (ctx === "custom" && match) {
+    const s = match.score;
+    const tone = s >= 70 ? "bg-emerald-500" : s >= 55 ? "bg-indigo-500" : s >= 40 ? "bg-amber-500" : "bg-gray-400";
+    const toneTxt = s >= 70 ? "text-emerald-700 bg-emerald-50" : s >= 55 ? "text-indigo-700 bg-indigo-50" : s >= 40 ? "text-amber-700 bg-amber-50" : "text-gray-500 bg-gray-50";
+    matchBlock = `
+    <div class="mb-2 flex flex-wrap items-center gap-2">
+      <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${toneTxt} text-xs font-semibold">
+        <span class="w-16 h-1.5 rounded-full bg-gray-200 overflow-hidden inline-block align-middle"><span class="block h-full ${tone}" style="width:${s}%"></span></span>
+        匹配度 ${s}
+      </span>
+      ${match.cats && match.cats.length ? match.cats.map(c => `<span class="badge bg-indigo-50 text-indigo-600">${c}</span>`).join("") : ""}
+      ${match.hits && match.hits.length ? `<span class="text-xs text-gray-400">命中：${match.hits.join("、")}</span>` : ""}
+    </div>`;
+  }
 
   let actions = "";
   if (ctx === "summary") {
@@ -737,6 +1040,7 @@ function jobCardHTML(j, activeCat, ctx) {
       </div>
       <span class="text-xs text-gray-400 whitespace-nowrap">📅 ${fmtDate(j.updateDate)}</span>
     </div>
+    ${matchBlock}
     ${matchedPositions.length ? `
     <div class="mb-2">
       <div class="text-xs text-indigo-500 font-medium mb-1">匹配岗位（${activeCat}）</div>
@@ -1412,6 +1716,10 @@ function initFilters() {
   fillSelect("dl-filter-edu", edus);
   fillSelect("dl-filter-type", types);
   fillSelect("dl-filter-ctype", ctypes);
+  fillSelect("cz-filter-city", cities);
+  fillSelect("cz-filter-edu", edus);
+  fillSelect("cz-filter-type", types);
+  fillSelect("cz-filter-ctype", ctypes);
   const dateFill = (id) => {
     const el = document.getElementById(id);
     const head = el.options.length ? el.options[0].outerHTML : '<option value="">全部</option>';
@@ -1535,7 +1843,7 @@ async function deleteResume(id) {
 function switchSection(sec) {
   scrollPositions[state.section] = window.scrollY;
   state.section = sec;
-  ["jobs","fav","summary","resume","deadline"].forEach(s => {
+  ["jobs","fav","summary","resume","deadline","custom"].forEach(s => {
     document.getElementById("section-"+s).classList.toggle("hidden", s !== sec);
   });
   document.querySelectorAll(".nav-btn").forEach(b => {
@@ -1546,6 +1854,7 @@ function switchSection(sec) {
   if (sec === "summary") renderSummary();
   if (sec === "resume") renderResumes();
   if (sec === "deadline") renderDeadline(false);
+  if (sec === "custom") renderCustom();
   requestAnimationFrame(() => {
     window.scrollTo(0, scrollPositions[sec] || 0);
   });
@@ -1678,6 +1987,7 @@ function hydrate(list) {
 function rerenderCurrent() {
   if (state.section === "jobs") renderJobs(false);
   else if (state.section === "deadline") renderDeadline(false);
+  else if (state.section === "custom") renderCustom();
   else if (state.section === "fav") renderFav();
   else if (state.section === "summary") renderSummary();
 }
@@ -1845,6 +2155,15 @@ async function init() {
   document.getElementById("dl-filter-ctype").addEventListener("change", e => { state.dlCType=e.target.value; state.dlPage=1; renderDeadline(); });
   document.getElementById("dl-filter-deadline").addEventListener("change", e => { state.dlDeadline=e.target.value; state.dlPage=1; renderDeadline(); });
   document.getElementById("dl-filter-link").addEventListener("change", e => { state.dlLinkOnly=e.target.checked; state.dlPage=1; renderDeadline(); });
+  // 定制（简历匹配）
+  document.getElementById("cz-search-input").addEventListener("input", e => { state.czSearch=e.target.value; renderCustom(true); });
+  document.getElementById("cz-filter-city").addEventListener("change", e => { state.czCity=e.target.value; renderCustom(true); });
+  document.getElementById("cz-filter-edu").addEventListener("change", e => { state.czEdu=e.target.value; renderCustom(true); });
+  document.getElementById("cz-filter-type").addEventListener("change", e => { state.czType=e.target.value; renderCustom(true); });
+  document.getElementById("cz-filter-ctype").addEventListener("change", e => { state.czCType=e.target.value; renderCustom(true); });
+  document.getElementById("cz-filter-opened").addEventListener("change", e => { state.czOpened=e.target.value; renderCustom(true); });
+  document.getElementById("cz-filter-deadline").addEventListener("change", e => { state.czDeadline=e.target.value; renderCustom(true); });
+  document.getElementById("cz-filter-link").addEventListener("change", e => { state.czLinkOnly=e.target.checked; renderCustom(true); });
   // 弹窗
   document.getElementById("modal").addEventListener("click", e => { if (e.target.id === "modal") closeModal(); });
   // 简历上传
